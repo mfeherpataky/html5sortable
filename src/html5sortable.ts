@@ -270,6 +270,13 @@ export default function sortable (sortableElements, options: object|string|undef
     var items = _filter(sortableElement.children, options.items)
     var itemStartIndex
     var startList
+
+    /**
+     * Timeout timer for placeholder relocation when dragging is out of a sortable list
+     */
+    let nonSortableTargetTimeout;
+    let leavingConnectedListTimer;
+
     // create element if user defined a placeholder element as a string
     let customPlaceholder
     if (options.placeholder !== null && options.placeholder !== undefined) {
@@ -375,7 +382,7 @@ export default function sortable (sortableElements, options: object|string|undef
             startParent: startParent
           }
         }))
-        const itemEndIndex = _index(dragging, Array.from(dragging.parentElement.children)
+        const itemEndIndex = _index(dragging, [...dragging.parentElement.children]
           .filter(item => item !== store(sortableElement).placeholder))
         /*
         Fire 'sortupdate' on itemIndex or itemParent change
@@ -403,6 +410,56 @@ export default function sortable (sortableElements, options: object|string|undef
       dragging = null
       draggingHeight = null
     })
+    /**
+     * Attempts to remove placeholder for when it can no longer be dropped in a valid DropTarget
+     * (a) remove when on top of a nonConnected Lists
+     * (b) remove when outside of a Sortable Lists
+     * (c) remove when ... any other cases?
+     */
+    _on(sortableElement, 'dragleave', () => {
+      if (!dragging) {
+        return
+      }
+
+      /**
+       * Checks is any two nodes are related
+       * Used for cases with embedded lists
+       * @param parent
+       * @param child
+       * @return {boolean}
+       * TODO - move to a separate location
+       */
+      const isDescendant = (parent, child) => {
+        let node = child.parentNode
+        while (node !== null) {
+          if (node === parent) {
+            return true
+          }
+          node = node.parentNode
+        }
+        return false
+      }
+
+      const originContainer = dragging.parentElement
+      const visiblePlaceholder = Array.from(stores.values()).map(data => data.placeholder)
+        .filter(placeholder => placeholder instanceof HTMLElement)
+        .filter(isInDom)[0]
+
+      /*
+       Timer is used to account for a swift user drags across large sections
+       of Sortable Lists - including some nested lists which may be in the way
+       */
+      clearTimeout(leavingConnectedListTimer)
+
+      if (!_listsConnected(sortableElement, originContainer) &&
+        !isDescendant(sortableElement, originContainer) &&
+        visiblePlaceholder) {
+        leavingConnectedListTimer = setTimeout(() => {
+          visiblePlaceholder.remove()
+          console.error(sortableElement, 'DragLeave - removing placeholder')
+        }, 100)
+      }
+    })
     // Handle drop event on sortable & placeholder
     _on(sortableElement, 'drop', function (e) {
       if (!_listsConnected(sortableElement, dragging.parentElement)) {
@@ -413,9 +470,7 @@ export default function sortable (sortableElements, options: object|string|undef
 
       _data(dragging, 'dropped', 'true')
       // get the one placeholder that is currently visible
-      var visiblePlaceholder = Array.from(stores.values()).map((data) => {
-        return data.placeholder
-      })
+      const visiblePlaceholder = Array.from(stores.values()).map(data => data.placeholder)
         // filter only HTMLElements
         .filter(placeholder => placeholder instanceof HTMLElement)
         // filter only elements in DOM
@@ -432,11 +487,11 @@ export default function sortable (sortableElements, options: object|string|undef
         }
       }))
 
-      let endParent = _isSortable(this) ? this : this.parentElement
-      const itemEndIndex = _index(dragging, Array.from(dragging.parentElement.children)
+      const endParent = _isSortable(this) ? this : this.parentElement
+      const itemEndIndex = _index(dragging, [...dragging.parentElement.children]
         .filter(item => item !== store(sortableElement).placeholder))
       /*
-      Fire 'sortupdate' on itemIndex or itemParent change
+       Fire 'sortupdate' on itemIndex or itemParent change
        */
       if (itemStartIndex !== itemEndIndex || startParent !== endParent) {
         const startSortableIndex = items.indexOf(dragging)
